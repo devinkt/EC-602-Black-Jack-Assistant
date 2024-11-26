@@ -1,11 +1,28 @@
+# Copyright 2024 Devin Kot-Thompson devinkt@bu.edu
+
 import random
+"""I plan to expand on this for Assignment 9 by having card hits come from image recognition"""
+
+"""This is a game assistant for BlackJack it uses the hi-low strategy for card counting where card ranks 2-6 increase the count by +1 
+    and ranks 10-A decrease the count by -1. This Running Count is then divided by the number of decks in use (if more than one) to calculate 
+    the True Count. A high positive True Count indicates probability slightly favors the player. This is because there is a higher
+    concentration of 10 value cards meaning the probability of Black Jack is higher. Additionally, if +10 to the player current hand will not bust
+    the hand it is suggested to double down. Finally the dealer must hit until their hand is >17 increasing the likelyhood that they will bust
+    A percentage counter also shows the likelyhood of every card to be drawn next further increasing the edge toward the player. My sources for this
+    assignment were the following:
+    https://www.youtube.com/watch?v=qd5oc9hLrXg
+    https://www.youtube.com/watch?v=3kGlk1E_Cnw
+    https://www.youtube.com/watch?v=QLYsck5fsLU"""
+
 
 class BlackJackGame:
     def __init__(self, num_players=1, num_decks=1):
         self.deck = Deck(num_decks)
         self.players = [Player(f'Player {i + 1}') for i in range(num_players)]
         self.dealer = Player('Dealer')
+        self.assistant = Assistant(self.deck, num_decks)
         self.dealer.is_dealer = True
+        self.num_players = num_players
 
     def start_game(self):
         """Starts main game sequence shuffle--> deal --> player turns --> dealer turns--> results --> repeat"""
@@ -26,7 +43,9 @@ class BlackJackGame:
         """Deal 2 cards to each player and the dealer"""
         for player in self.players + [self.dealer]:
             for _ in range(2):
-                player.hit(self.deck.deal_card())
+                card = self.deck.deal_card()
+                player.hit(card)
+                self.assistant.update_count(card)
             if(player.is_dealer):
                 print(player.name, player.hand[1])
             else:
@@ -39,18 +58,28 @@ class BlackJackGame:
             player_soft_value = player.hand_value()[1]
             while player_hard_value < 21 or player_soft_value < 21:
                 #display user hand_value
+                true_count = self.assistant.get_true_count()
+                print(f"True Count: {true_count:.2f}")
+                print(self.assistant.suggest_action(player.hand, self.dealer.hand[1], player.hand_value(), true_count))
+                self.assistant.percentage_chance_next_card()
                 decision = input(f"Type {player.name} Decision (hit, stay, surrender, double, split): ") #maybe turn into ui module? later will be given suggestion by assistant
                 if(decision == 'hit' or decision == 'double'):
                     if(decision == 'double'):
                         player.double = True
-                    player.hit(self.deck.deal_card())
+                    card = self.deck.deal_card()
+                    player.hit(card)
+                    self.assistant.update_count(card)
                     player_hard_value = player.hand_value()[0] 
                     player_soft_value = player.hand_value()[1]
                     print(player.name, player.hand)
                 elif(decision == 'split'):
                     player.split = True
-                    player.hit(self.deck.deal_card())
-                    player.hit(self.deck.deal_card())
+                    card1 = self.deck.deal_card()
+                    card2 = self.deck.deal_card()
+                    player.hit(card1)
+                    self.assistant.update_count(card1)
+                    player.hit(card2)
+                    self.assistant.update_count(card2)
                     deck1 = [player.hand[0],player.hand[2]]
                     deck2 = [player.hand[1],player.hand[3]]
                     print(player.name,"\n",deck1, "\n", deck2)
@@ -62,7 +91,9 @@ class BlackJackGame:
                         decision = input(f"{player.name} would you like to hit or stay on hand 1: ")
                         split_hit_value = [0, 0]
                         if(decision == 'hit'):
-                            player.hit(self.deck.deal_card())
+                            card = self.deck.deal_card()
+                            player.hit(card)
+                            self.assistant.update_count(card)
                             next_card = player.hand[-1]
                             split_hit_value = player.next_card_value(next_card)
                             print(split_hit_value)
@@ -75,7 +106,9 @@ class BlackJackGame:
                         decision = input(f"{player.name} would you like to hit or stay on hand 2: ")
                         split_hit_value = [0, 0]
                         if(decision == 'hit'):
-                            player.hit(self.deck.deal_card())
+                            card = self.deck.deal_card()
+                            player.hit(card)
+                            self.assistant.update_count(card)
                             next_card = player.hand[-1]
                             split_hit_value = player.next_card_value(next_card)
                             print(split_hit_value)
@@ -98,7 +131,9 @@ class BlackJackGame:
         dealer_hard_value = self.dealer.hand_value()[0]
         dealer_soft_value = self.dealer.hand_value()[1]
         while(dealer_hard_value < 17 or dealer_soft_value < 17 or dealer_hard_value == 21 or dealer_soft_value == 21):
-            self.dealer.hit(self.deck.deal_card())
+            card = self.deck.deal_card()
+            self.dealer.hit(card)
+            self.assistant.update_count(card)
             dealer_hard_value = self.dealer.hand_value()[0]
             dealer_soft_value = self.dealer.hand_value()[1]
     
@@ -107,6 +142,7 @@ class BlackJackGame:
         print("dealer hand value", self.dealer.hand_value())
         dealer_hard_value = self.dealer.hand_value()[0]
         dealer_soft_value = self.dealer.hand_value()[1]
+        dealer_values = [dealer_hard_value, dealer_soft_value]
         for player in self.players:
             if(player.split):
                 player_hard_value_deck1 = player.hand_value_split()[0]
@@ -156,7 +192,7 @@ class BlackJackGame:
                         player.bankroll -= 10 #bust
                     print("bust")
                     print(f"{player.name} bankroll: ${player.bankroll}")
-                elif((max(hand_values) > max(hand_values)) or (dealer_soft_value > 21)):
+                elif((max(hand_values) > max(dealer_values)) or (dealer_soft_value > 21)):
                     if(player_hard_value == 21 or player_soft_value == 21):
                         if(player.double):
                             player.bankroll += 30
@@ -283,6 +319,96 @@ class Player:
             hard_value += 11
             soft_value += 1
         return hard_value, soft_value
+
+
+class Assistant:
+    def __init__(self, deck, num_decks):
+        self.running_count = 0
+        self.num_decks = num_decks
+        self.deck = deck
+
+    def percentage_chance_next_card(self):
+        """Provide percentage chance of each rank"""
+        ace, king, queen, jack, ten, nine, eight, seven, six, five, four, three, two = 0,0,0,0,0,0,0,0,0,0,0,0,0
+        for card in self.deck.cards:
+            if(card['rank'] == 'A'):
+                ace += 1
+            elif(card['rank'] == 'K'):
+                king += 1
+            elif(card['rank'] == 'Q'):
+                queen += 1
+            elif(card['rank'] == 'J'):
+                jack += 1
+            elif(card['rank'] == 10):
+                ten += 1
+            elif(card['rank'] == 9):
+                nine += 1
+            elif(card['rank'] == 8):
+                eight += 1
+            elif(card['rank'] == 7):
+                seven += 1
+            elif(card['rank'] == 6):
+                six += 1
+            elif(card['rank'] == 5):
+                five += 1
+            elif(card['rank'] == 4):
+                four += 1
+            elif(card['rank'] == 3):
+                three += 1
+            else:
+                two += 1
+        num_cards = len(self.deck.cards)
+        per_ace = (ace/num_cards)*100
+        per_king = (king/num_cards)*100
+        per_queen = (queen/num_cards)*100
+        per_jack = (jack/num_cards)*100
+        per_ten = (ten/num_cards)*100
+        per_nine = (nine/num_cards)*100
+        per_eight = (eight/num_cards)*100
+        per_seven = (seven/num_cards)*100
+        per_six = (six/num_cards)*100
+        per_five = (five/num_cards)*100
+        per_four = (four/num_cards)*100
+        per_three = (three/num_cards)*100
+        per_two = (two/num_cards)*100
+        print(f"""Percent chance of each card:
+            Ace:   {per_ace:.2f}%  
+            King:  {per_king:.2f}%  
+            Queen: {per_queen:.2f}%  
+            Jack:  {per_jack:.2f}%  
+            Ten:   {per_ten:.2f}%  
+            Nine:  {per_nine:.2f}%  
+            Eight: {per_eight:.2f}%  
+            Seven: {per_seven:.2f}%  
+            Six:   {per_six:.2f}%  
+            Five:  {per_five:.2f}%  
+            Four:  {per_four:.2f}%  
+            Three: {per_three:.2f}%  
+            Two:   {per_two:.2f}%""")        
+    
+    def update_count(self, card):
+        """Update the running count based on the card dealt."""
+        if card['rank'] in [2, 3, 4, 5, 6]:
+            self.running_count += 1
+        elif card['rank'] in [10, 'J', 'Q', 'K', 'A']:
+            self.running_count -= 1
+    
+    def get_true_count(self):
+        """Calculate the true count by adjusting for remaining decks."""
+        remaining_decks = max(self.num_decks - (52 - len(self.deck.cards)) / 52, 1)  # Prevent division by zero
+        return self.running_count / remaining_decks
+    
+    def suggest_action(self, player_hand, dealer_card, player_value, true_count):
+        """Provide a suggestion based on the current game state and true count."""
+        if true_count > 3:
+            return "Consider doubling or splitting if the hand allows it."
+        elif true_count < -1:
+            return "Play conservatively, the deck favors the dealer."
+        else:
+            return "Play standard strategy."
+
+    
+
 
 
 game1 = BlackJackGame(num_players=2)
